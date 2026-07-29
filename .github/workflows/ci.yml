@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  struttura:
+    name: Gate struttura - i file ci sono ancora?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: I file indispensabili non sono stati cancellati
+        run: |
+          for f in data/avvisi.json src/build.mjs test/bacheca.test.mjs package.json; do
+            if [ ! -f "$f" ]; then
+              echo "manca $f: non si passa"
+              exit 1
+            fi
+          done
+          echo "struttura del progetto integra"
+
+  segreti:
+    name: Gate segreti - niente credenziali nel repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cerca credenziali nel repository
+        run: bash script/sniffa-segreti.sh .
+
+  applicazione:
+    name: Gate applicazione - dipendenze, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      - name: Smoke test sull'artefatto
+        run: |
+          attesi=$(node -e "console.log(JSON.parse(require('fs').readFileSync('data/avvisi.json','utf8')).avvisi.length)")
+          trovati=$(grep -c '<td class="cod">' dist/index.html || true)
+          test -s dist/index.html || { echo "dist/index.html mancante o vuoto"; exit 1; }
+          echo "attesi=$attesi trovati=$trovati"
+          [ "$attesi" -eq "$trovati" ] || { echo "numero avvisi non corrisponde"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sito
+          path: dist/
